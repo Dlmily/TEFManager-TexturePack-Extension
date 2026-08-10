@@ -122,14 +122,6 @@ std::vector<std::string> TexturePack::GetEntryNames() const {
     return names;
 }
 
-std::vector<uint8_t> TexturePack::GetRawFile(const std::string &name) {
-    const auto it = _index.find(name);
-    if (it == _index.end()) {
-        return {};
-    }
-    return ExtractFile(it->second);
-}
-
 void TexturePack::Clear() {
     _index.clear();
 }
