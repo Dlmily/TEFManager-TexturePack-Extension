@@ -36,7 +36,6 @@
 #include "tefkernel-cpp-wrapper/patchlib/field.hpp"
 #include "tefkernel-cpp-wrapper/patchlib/struct/string.hpp"
 #include "tefkernel-cpp-wrapper/tefkernel/terraria/texture2d.h"
-#include "tefkernel-cpp-wrapper/tefkernel/terraria/asset.h"
 
 
 static constexpr module_info_t g_module_info = {
@@ -97,61 +96,73 @@ static bool load_json(const std::filesystem::path &path, std::vector<PackEntry> 
     }
 }
 
-TEFKernel::PatchLib::Field SharedBatching;
-TEFKernel::PatchLib::Field NonSharedHeadInsert;
+// 纹理批次字段（决定绘制顺序，UI 面板需非共享头插）
+TEFKernel::PatchLib::Field FSharedBatching;
+TEFKernel::PatchLib::Field FNonSharedHeadInsert;
 
 
-static bool LoadTexture2D_Hook(patch_handle_t instance, void **args,
-                                  const patch_method_signature_t *sig_info, void *result) {
-    // 获取资源名称
+// Prefix：若 assetName 在材质包索引中，直接创建材质包纹理并作为返回值
+// （返回 true 跳过原方法，避免先加载原版再加载材质包造成双重加载）
+static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
+                                 const patch_method_signature_t *sig_info, void *result) {
+    if (!result) {
+        return false;
+    }
+
     const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).ToString();
-        LOGD("Request_Texture2d_Hook: assetName='%s'", assetName.c_str());
 
-        // 检查是否在索引中
-        bool hasTexture = g_texture_indexes.contains(assetName);
-        LOGD("Request_Texture2d_Hook: texture in index? %s", hasTexture ? "YES" : "NO");
+    // 不在材质包索引中则使用原版纹理（走原方法）
+    if (!g_texture_indexes.contains(assetName)) {
+        return false;
+    }
 
-        if (hasTexture) {
-            LOGD("Request_Texture2d_Hook: Loading texture: %s", assetName.c_str());
+    // 获取材质包纹理数据
+    TextureData textureData = TextureManager::Instance().Get(assetName);
+    if (!textureData.IsValid()) {
+        LOGW("LoadTexture2D: invalid texture data: %s", assetName.c_str());
+        return false;
+    }
 
-            // 获取纹理数据
-            TextureData textureData = TextureManager::Instance().Get(assetName);
-            LOGD("Request_Texture2d_Hook: textureData.IsValid() = %s", textureData.IsValid() ? "true" : "false");
+    // 创建材质包的新纹理（UnityEngine 像素）
+    auto texture = terraria_texture2d_create(
+        textureData.width,
+        textureData.height,
+        TEXTURE_FORMAT_RGBA32,
+        textureData.data.data(),
+        textureData.data.size()
+    );
+    if (!texture) {
+        LOGE("LoadTexture2D: failed to create texture: %s", assetName.c_str());
+        return false;
+    }
 
-            if (textureData.IsValid()) {
-                LOGD("Request_Texture2d_Hook: texture dimensions: %dx%d, size: %zu bytes",
-                     textureData.width, textureData.height, textureData.data.size());
+    // 批次字段处理（规律明确，无需参考原版对象）：
+    // UI 面板类纹理需 SharedBatching=0 + NonSharedHeadInsert=1（非共享分支头插，先画背景，
+    // 避免尾插盖住上层文字/图标）。物品/方块/弹幕等世界内容 SharedBatching=1。
+    const bool isUiTexture = assetName.find("/UI/") != std::string::npos ||
+                             assetName.find("Inventory_Back") != std::string::npos ||
+                             assetName.find("PanelBackground") != std::string::npos ||
+                             assetName.find("/CharCreation/") != std::string::npos ||
+                             assetName.find("/WorldCreation/") != std::string::npos;
 
-                // 创建纹理
-                auto texture = terraria_texture2d_create(
-                    textureData.width,
-                    textureData.height,
-                    TEXTURE_FORMAT_RGBA32,
-                    textureData.data.data(),
-                    textureData.data.size()
-                );
+    if (isUiTexture) {
+        if (FSharedBatching.IsValid()) FSharedBatching.SetValue<bool>(texture, false);
+        if (FNonSharedHeadInsert.IsValid()) FNonSharedHeadInsert.SetValue<bool>(texture, true);
+        LOGD("LoadTexture2D: UI texture, SharedBatching=0 NonShared=1 for %s", assetName.c_str());
+    } else {
+        if (FSharedBatching.IsValid()) FSharedBatching.SetValue<bool>(texture, true);
+        LOGD("LoadTexture2D: world texture, keep SharedBatching=1 for %s", assetName.c_str());
+    }
 
-                if (assetName.starts_with("Content/Images/Item_")) {
-                    SharedBatching.SetValue<bool>(texture, false);
-                    NonSharedHeadInsert.SetValue<bool>(texture, false);
-                }
+    // 直接作为返回值（跳过原方法，只加载材质包一份）
+    *static_cast<patch_handle_t *>(result) = texture;
+    LOGD("LoadTexture2D: replaced texture object for %s", assetName.c_str());
+    return true;
+}
 
-                if (texture) {
-                    *static_cast<patch_handle_t *>(result) = texture;
-                    return true;
-                }
-                LOGE("Request_Texture2d_Hook: Failed to create texture for: %s", assetName.c_str());
-            } else {
-                LOGE("Request_Texture2d_Hook: Invalid texture data for: %s", assetName.c_str());
-                LOGE("Request_Texture2d_Hook: data.size()=%zu, width=%d, height=%d",
-                     textureData.data.size(), textureData.width, textureData.height);
-            }
-        } else {
-            LOGD("Request_Texture2d_Hook: texture not in index, using original: %s", assetName.c_str());
-        }
-
-
-    return false;
+// Postfix：原方法已被跳过，保留空实现
+static void LoadTexture2D_Postfix(patch_handle_t instance, void **args,
+                                  void *result, const patch_method_signature_t *sig_info) {
 }
 
 /**
@@ -181,11 +192,11 @@ static bool init_module(module_entry_t *entry)
     auto LoadTexture2D = ContentManager.GetMethod("LoadTexture2D", 1);
 
     TEFKernel::PatchLib::Type Texture2d("Microsoft.Xna.Framework.Graphics", "Texture2D");
-    SharedBatching = Texture2d.GetField("SharedBatching");
-    NonSharedHeadInsert = Texture2d.GetField("NonSharedHeadInsert");
+    FSharedBatching = Texture2d.GetField("SharedBatching");
+    FNonSharedHeadInsert = Texture2d.GetField("NonSharedHeadInsert");
 
     // ReSharper disable once CppNoDiscardExpression
-    patchlib_install_prepost_hook(LoadTexture2D.GetHandle(), LoadTexture2D_Hook, nullptr);
+    patchlib_install_prepost_hook(LoadTexture2D.GetHandle(), LoadTexture2D_Prefix, LoadTexture2D_Postfix);
 
     return true;
 }

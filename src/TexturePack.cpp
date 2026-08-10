@@ -153,6 +153,11 @@ bool TexturePack::BuildZipIndex() {
             continue;
         }
 
+        // 跳过 JSON 等非图像文件（本地化/配置）
+        if (is_json_file(filename)) {
+            continue;
+        }
+
         // entry_name = 去掉后缀
         std::string entry_name = filename;
         if (const size_t dot_pos = entry_name.find_last_of('.'); dot_pos != std::string::npos) {
