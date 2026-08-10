@@ -122,6 +122,14 @@ std::vector<std::string> TexturePack::GetEntryNames() const {
     return names;
 }
 
+std::vector<uint8_t> TexturePack::GetRawFile(const std::string &name) {
+    const auto it = _index.find(name);
+    if (it == _index.end()) {
+        return {};
+    }
+    return ExtractFile(it->second);
+}
+
 void TexturePack::Clear() {
     _index.clear();
 }
@@ -150,6 +158,11 @@ bool TexturePack::BuildZipIndex() {
 
         // 只索引 Content/ 下的文件
         if (filename.find(CONTENT_PREFIX) != 0) {
+            continue;
+        }
+
+        // 跳过 JSON 等非图像文件（本地化/配置）
+        if (is_json_file(filename)) {
             continue;
         }
 

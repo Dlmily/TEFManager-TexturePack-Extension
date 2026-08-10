@@ -111,6 +111,13 @@ public:
     TextureData GetTexture(const std::string& name);
 
     /**
+     * @brief 通过 entry_name 获取材质包的原始文件字节（不解码）
+     * @param name entry_name
+     * @return 原始文件字节，不存在返回空
+     */
+    std::vector<uint8_t> GetRawFile(const std::string& name);
+
+    /**
      * @brief 获取所有索引的 entry_name 列表
      */
     [[nodiscard]] std::vector<std::string> GetEntryNames() const;

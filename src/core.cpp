@@ -97,60 +97,134 @@ static bool load_json(const std::filesystem::path &path, std::vector<PackEntry> 
     }
 }
 
-TEFKernel::PatchLib::Field SharedBatching;
-TEFKernel::PatchLib::Field NonSharedHeadInsert;
+// 当前正在由 LoadTexture2D 加载的 assetName（供 LoadImage hook 关联）
+static std::string g_currentAsset;
+
+// 纹理批次相关字段（复制到新纹理，保证 MaterialBuffer 状态一致，避免崩溃）
+TEFKernel::PatchLib::Field FTextureOffsetScale;
+TEFKernel::PatchLib::Field FSharedBatching;
+TEFKernel::PatchLib::Field FNonSharedHeadInsert;
+TEFKernel::PatchLib::Field FPackedEntry;
+TEFKernel::PatchLib::Field FTextureAtlas;
+TEFKernel::PatchLib::Field FBatchTextureIndex;
+TEFKernel::PatchLib::Field FUnityTexture;
 
 
-static bool LoadTexture2D_Hook(patch_handle_t instance, void **args,
-                                  const patch_method_signature_t *sig_info, void *result) {
+// Prefix：记录当前加载的 assetName
+static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
+                                 const patch_method_signature_t *sig_info, void *result) {
+    const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).ToString();
+    g_currentAsset = assetName;
+    LOGD("LoadTexture2D: loading asset='%s'", assetName.c_str());
+    return false;
+}
+
+// Postfix：创建材质包纹理，替换原版纹理的 _unityTexture，同时复制全部批次字段
+static void LoadTexture2D_Postfix(patch_handle_t instance, void **args,
+                                  void *result, const patch_method_signature_t *sig_info) {
+    g_currentAsset.clear();
+    if (!result) {
+        return;
+    }
+
     // 获取资源名称
     const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).ToString();
-        LOGD("Request_Texture2d_Hook: assetName='%s'", assetName.c_str());
 
-        // 检查是否在索引中
-        bool hasTexture = g_texture_indexes.contains(assetName);
-        LOGD("Request_Texture2d_Hook: texture in index? %s", hasTexture ? "YES" : "NO");
+    // 不在材质包索引中则使用原版纹理
+    if (!g_texture_indexes.contains(assetName)) {
+        return;
+    }
 
-        if (hasTexture) {
-            LOGD("Request_Texture2d_Hook: Loading texture: %s", assetName.c_str());
+    // 获取游戏原版纹理对象（原方法已执行，批次状态完整）
+    patch_handle_t originalTexture = *static_cast<patch_handle_t *>(result);
+    if (!originalTexture) {
+        LOGW("LoadTexture2D: original texture is null: %s", assetName.c_str());
+        return;
+    }
 
-            // 获取纹理数据
-            TextureData textureData = TextureManager::Instance().Get(assetName);
-            LOGD("Request_Texture2d_Hook: textureData.IsValid() = %s", textureData.IsValid() ? "true" : "false");
+    // 获取材质包纹理数据
+    TextureData textureData = TextureManager::Instance().Get(assetName);
+    if (!textureData.IsValid()) {
+        LOGW("LoadTexture2D: invalid texture data: %s", assetName.c_str());
+        return;
+    }
 
-            if (textureData.IsValid()) {
-                LOGD("Request_Texture2d_Hook: texture dimensions: %dx%d, size: %zu bytes",
-                     textureData.width, textureData.height, textureData.data.size());
+    // 创建材质包的新纹理（UnityEngine 像素）
+    auto texture = terraria_texture2d_create(
+        textureData.width,
+        textureData.height,
+        TEXTURE_FORMAT_RGBA32,
+        textureData.data.data(),
+        textureData.data.size()
+    );
+    if (!texture) {
+        LOGE("LoadTexture2D: failed to create texture: %s", assetName.c_str());
+        return;
+    }
 
-                // 创建纹理
-                auto texture = terraria_texture2d_create(
-                    textureData.width,
-                    textureData.height,
-                    TEXTURE_FORMAT_RGBA32,
-                    textureData.data.data(),
-                    textureData.data.size()
-                );
+    // 诊断：打印原版纹理的关键批次字段值（确认 UI 面板应设的值）
+    void *origPackedEntry = nullptr; FPackedEntry.GetValue(originalTexture, &origPackedEntry);
+    void *origAtlas = nullptr; FTextureAtlas.GetValue(originalTexture, &origAtlas);
+    LOGD("LoadTexture2D: orig SharedBatching=%d NonSharedHeadInsert=%d BatchIndex=%d PackedEntry=%p Atlas=%p for %s",
+         FSharedBatching.GetValue<bool>(originalTexture) ? 1 : 0,
+         FNonSharedHeadInsert.GetValue<bool>(originalTexture) ? 1 : 0,
+         FBatchTextureIndex.GetValue<int>(originalTexture),
+         origPackedEntry, origAtlas,
+         assetName.c_str());
 
-                if (assetName.starts_with("Content/Images/Item_")) {
-                    SharedBatching.SetValue<bool>(texture, false);
-                    NonSharedHeadInsert.SetValue<bool>(texture, false);
-                }
+    // 诊断：打印新纹理尺寸与内部 _unityTexture 是否有效
+    void *diagUnity = nullptr;
+    FUnityTexture.GetValue(texture, &diagUnity);
+    LOGD("LoadTexture2D: new tex w=%d h=%d unityTexture=%p for %s",
+         terraria_texture2d_get_width(texture),
+         terraria_texture2d_get_height(texture),
+         diagUnity, assetName.c_str());
 
-                if (texture) {
-                    *static_cast<patch_handle_t *>(result) = texture;
-                    return true;
-                }
-                LOGE("Request_Texture2d_Hook: Failed to create texture for: %s", assetName.c_str());
-            } else {
-                LOGE("Request_Texture2d_Hook: Invalid texture data for: %s", assetName.c_str());
-                LOGE("Request_Texture2d_Hook: data.size()=%zu, width=%d, height=%d",
-                     textureData.data.size(), textureData.width, textureData.height);
-            }
-        } else {
-            LOGD("Request_Texture2d_Hook: texture not in index, using original: %s", assetName.c_str());
-        }
+    // 保留游戏原版纹理对象（批次/图集状态完整），仅替换其内部 UnityEngine 像素纹理
+    // 这样批处理系统/绘制顺序不被破坏，避免“面板盖住上层”
+    // 注意：直接替换 _unityTexture 会导致渲染崩溃，因此改为返回新纹理对象
+    // 尺寸检查（记录日志）
+    const int origW = terraria_texture2d_get_width(originalTexture);
+    const int origH = terraria_texture2d_get_height(originalTexture);
+    if (origW != textureData.width || origH != textureData.height) {
+        LOGW("LoadTexture2D: size mismatch orig=%dx%d pack=%dx%d, skip: %s",
+             origW, origH, textureData.width, textureData.height, assetName.c_str());
+        return;
+    }
 
+    // 批次字段处理：
+    // UI 面板类纹理需要 SharedBatching=0 + NonSharedHeadInsert=1（非共享分支头插，先画背景，
+    // 避免尾插盖住上层文字/图标）。物品/方块/弹幕等世界内容保持原版 SharedBatching=1。
+    // 用路径前缀判断：Content/Images/UI/ 及背包面板（Inventory_Back）等属 UI 面板。
+    const bool isUiTexture = assetName.find("/UI/") != std::string::npos ||
+                             assetName.find("Inventory_Back") != std::string::npos ||
+                             assetName.find("PanelBackground") != std::string::npos ||
+                             assetName.find("/CharCreation/") != std::string::npos ||
+                             assetName.find("/WorldCreation/") != std::string::npos;
 
+    if (isUiTexture) {
+        // UI 面板：非共享 + 头插，先画背景
+        if (FSharedBatching.IsValid()) FSharedBatching.SetValue<bool>(texture, false);
+        if (FNonSharedHeadInsert.IsValid()) FNonSharedHeadInsert.SetValue<bool>(texture, true);
+        LOGD("LoadTexture2D: UI texture, SharedBatching=0 NonShared=1 for %s", assetName.c_str());
+    } else {
+        // 世界内容：保持共享批
+        if (FSharedBatching.IsValid()) FSharedBatching.SetValue<bool>(texture, true);
+        LOGD("LoadTexture2D: world texture, keep SharedBatching=1 for %s", assetName.c_str());
+    }
+
+    // 返回新纹理对象
+    *static_cast<patch_handle_t *>(result) = texture;
+    LOGD("LoadTexture2D: replaced texture object for %s", assetName.c_str());
+}
+
+// Prefix：替换 Unity 解码时的 PNG 字节数据（ImageConversion.LoadImage）
+static bool ImageLoadImage_Prefix(patch_handle_t instance, void **args,
+                                  const patch_method_signature_t *sig_info, void *result) {
+    if (g_currentAsset.empty() || !g_texture_indexes.contains(g_currentAsset)) {
+        return false;
+    }
+    LOGD("ImageLoadImage: called for currentAsset='%s'", g_currentAsset.c_str());
     return false;
 }
 
@@ -181,11 +255,26 @@ static bool init_module(module_entry_t *entry)
     auto LoadTexture2D = ContentManager.GetMethod("LoadTexture2D", 1);
 
     TEFKernel::PatchLib::Type Texture2d("Microsoft.Xna.Framework.Graphics", "Texture2D");
-    SharedBatching = Texture2d.GetField("SharedBatching");
-    NonSharedHeadInsert = Texture2d.GetField("NonSharedHeadInsert");
+    FTextureOffsetScale = Texture2d.GetField("TextureOffsetScale");
+    FSharedBatching = Texture2d.GetField("SharedBatching");
+    FNonSharedHeadInsert = Texture2d.GetField("NonSharedHeadInsert");
+    FPackedEntry = Texture2d.GetField("PackedEntry");
+    FTextureAtlas = Texture2d.GetField("_textureAtlas");
+    FBatchTextureIndex = Texture2d.GetField("BatchTextureIndex");
+    FUnityTexture = Texture2d.GetField("_unityTexture");
+
+    // hook UnityEngine.ImageConversion.LoadImage(Texture2D, byte[], bool)
+    TEFKernel::PatchLib::Type ImageConversionType("UnityEngine", "ImageConversion");
+    auto LoadImageMethod = ImageConversionType.GetMethod("LoadImage", 3);
 
     // ReSharper disable once CppNoDiscardExpression
-    patchlib_install_prepost_hook(LoadTexture2D.GetHandle(), LoadTexture2D_Hook, nullptr);
+    patchlib_install_prepost_hook(LoadTexture2D.GetHandle(), LoadTexture2D_Prefix, LoadTexture2D_Postfix);
+    if (LoadImageMethod.IsValid()) {
+        patchlib_install_prepost_hook(LoadImageMethod.GetHandle(), ImageLoadImage_Prefix, nullptr);
+        LOGI("Hooked ImageConversion.LoadImage");
+    } else {
+        LOGE("Failed to get ImageConversion.LoadImage");
+    }
 
     return true;
 }
