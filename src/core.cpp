@@ -175,6 +175,10 @@ static bool init_module(module_entry_t *entry)
     std::vector<PackEntry> pack_entries{};
 
     load_json(std::filesystem::path(entry->private_dir) / "config.json", pack_entries);
+
+    // 预先分配容量，避免 push_back 扩容导致 g_texture_indexes 中已存储的指针失效（悬空）
+    packs.reserve(pack_entries.size());
+
     for (const auto& _pack : pack_entries) {
         TexturePack pack(_pack);
         pack.BuildIndex();
