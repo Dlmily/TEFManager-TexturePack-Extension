@@ -28,9 +28,9 @@
 #include <vector>
 
 enum class PackType {
-    Terraria = 0,   // 标准 ZIP 格式，Content/ 目录
-    TLPro,          // TLPro 格式，Modified/ 目录 + JSON 配置
-    TEFManager      // TEFManager 格式（预留）
+    Terraria = 0, // 标准 ZIP 格式，Content/ 目录
+    TLPro, // TLPro 格式，Modified/ 目录 + JSON 配置
+    TEFManager // TEFManager 格式（预留）
 };
 
 struct PackEntry {
@@ -38,25 +38,28 @@ struct PackEntry {
     int priority;
     PackType type;
 
-    PackEntry() : priority(0), type(PackType::Terraria) {}
+    PackEntry() : priority(0), type(PackType::Terraria) {
+    }
 };
 
 /**
  * @brief 纹理数据，包含解码后的像素数据和元信息
  */
 struct TextureData {
-    std::vector<uint8_t> data;  // RGBA 像素数据
+    std::vector<uint8_t> data; // RGBA 像素数据
     int width = 0;
     int height = 0;
-    int channels = 4;  // 默认 RGBA
+    int channels = 4; // 默认 RGBA
 
     TextureData() = default;
 
-    TextureData(std::vector<uint8_t>&& pixels, const int w, const int h, const int c = 4)
-        : data(std::move(pixels)), width(w), height(h), channels(c) {}
+    TextureData(std::vector<uint8_t> &&pixels, const int w, const int h, const int c = 4)
+        : data(std::move(pixels)), width(w), height(h), channels(c) {
+    }
 
-    TextureData(const uint8_t* pixels, const size_t size, const int w, const int h, const int c = 4)
-        : data(pixels, pixels + size), width(w), height(h), channels(c) {}
+    TextureData(const uint8_t *pixels, const size_t size, const int w, const int h, const int c = 4)
+        : data(pixels, pixels + size), width(w), height(h), channels(c) {
+    }
 
     /**
      * @brief 检查数据是否有效
@@ -108,7 +111,7 @@ public:
      * @param name entry_name
      * @return 纹理数据（解压后的原始字节），不存在返回空
      */
-    TextureData GetTexture(const std::string& name);
+    TextureData GetTexture(const std::string &name);
 
     /**
      * @brief 获取所有索引的 entry_name 列表
@@ -126,9 +129,11 @@ private:
 
     // 内部方法
     bool BuildZipIndex();
+
     bool BuildTLProIndex();
-    std::vector<uint8_t> ExtractFile(const std::string& path) const;
+
+    std::vector<uint8_t> ExtractFile(const std::string &path) const;
 
     // 工具方法
-    static bool ParseTLConfig(const std::vector<uint8_t>& jsonData, std::string& entry_name);
+    static bool ParseTLConfig(const std::vector<uint8_t> &jsonData, std::string &entry_name);
 };

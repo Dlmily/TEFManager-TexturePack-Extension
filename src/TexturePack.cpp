@@ -88,11 +88,11 @@ TextureData TexturePack::GetTexture(const std::string &name) {
 
     // 解码图像
     int width, height, channels;
-    unsigned char* imageData = stbi_load_from_memory(
+    unsigned char *imageData = stbi_load_from_memory(
         fileData.data(),
         static_cast<int>(fileData.size()),
         &width, &height, &channels,
-        4  // 强制转换为 RGBA
+        4 // 强制转换为 RGBA
     );
 
     if (!imageData) {
@@ -104,8 +104,8 @@ TextureData TexturePack::GetTexture(const std::string &name) {
     // 因为已经设置了翻转，所以数据可以直接使用
     const size_t dataSize = width * height * 4;
     TextureData result(
-            std::vector(imageData, imageData + dataSize),
-            width, height, 4);
+        std::vector(imageData, imageData + dataSize),
+        width, height, 4);
 
     // 释放 stb_image 资源
     stbi_image_free(imageData);
@@ -161,7 +161,7 @@ bool TexturePack::BuildZipIndex() {
         // entry_name = 去掉后缀
         std::string entry_name = filename;
         if (const size_t dot_pos = entry_name.find_last_of('.'); dot_pos != std::string::npos) {
-            entry_name = entry_name.substr(0, dot_pos);  // 删除最后一个 . 及其之后的内容
+            entry_name = entry_name.substr(0, dot_pos); // 删除最后一个 . 及其之后的内容
         }
         _index[entry_name] = filename;
         ++total;

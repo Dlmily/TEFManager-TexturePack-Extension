@@ -39,14 +39,14 @@
 
 
 static constexpr module_info_t g_module_info = {
-    .pkg_id = "eternal.future.texturepackextension",           // 唯一包名
-    .name = "TexturePackExtension",                          // 插件名称
-    .author = "eternalfuture-e38299",                        // 作者
-    .version = "1.0.0",                           // 版本
-    .version_code = 1,                            // 版本代码
-    .api_version = 1,                             // API版本
-    .plugin_dependencies_sizes = 0,               // 依赖插件数组大小（如需依赖请修改）
-    .plugin_dependencies = nullptr,                 // 依赖插件列表
+    .pkg_id = "eternal.future.texturepackextension", // 唯一包名
+    .name = "TexturePackExtension", // 插件名称
+    .author = "eternalfuture-e38299", // 作者
+    .version = "1.0.0", // 版本
+    .version_code = 1, // 版本代码
+    .api_version = 1, // API版本
+    .plugin_dependencies_sizes = 0, // 依赖插件数组大小（如需依赖请修改）
+    .plugin_dependencies = nullptr, // 依赖插件列表
 };
 
 static bool load_json(const std::filesystem::path &path, std::vector<PackEntry> &output) {
@@ -68,7 +68,7 @@ static bool load_json(const std::filesystem::path &path, std::vector<PackEntry> 
         // 临时存储所有 enable=true 的条目
         std::vector<PackEntry> temp;
 
-        for (const auto& item : j) {
+        for (const auto &item: j) {
             if (item.value("enable", false)) {
                 PackEntry entry;
                 entry.file = path.parent_path() / "texture_packs" / item.value("file", "");
@@ -80,25 +80,24 @@ static bool load_json(const std::filesystem::path &path, std::vector<PackEntry> 
 
         // 按优先级排序
         std::ranges::sort(temp,
-                          [](const PackEntry& a, const PackEntry& b) {
+                          [](const PackEntry &a, const PackEntry &b) {
                               return a.priority < b.priority;
                           });
 
-        output = std::move(temp);  // 移动赋值，高效
+        output = std::move(temp); // 移动赋值，高效
         return true;
-
-    } catch (const nlohmann::json::parse_error& e) {
+    } catch (const nlohmann::json::parse_error &e) {
         LOGE("JSON parse error in %s: %s\n", path.c_str(), e.what());
         return false;
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         LOGE("Error reading %s: %s\n", path.c_str(), e.what());
         return false;
     }
 }
 
 // 纹理批次字段（决定绘制顺序，UI 面板需非共享头插）
-TEFKernel::PatchLib::Field FSharedBatching;
-TEFKernel::PatchLib::Field FNonSharedHeadInsert;
+static TEFKernel::PatchLib::Field FSharedBatching;
+static TEFKernel::PatchLib::Field FNonSharedHeadInsert;
 
 
 // Prefix：若 assetName 在材质包索引中，直接创建材质包纹理并作为返回值
@@ -109,7 +108,8 @@ static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
         return false;
     }
 
-    const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).ToString();
+    const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).
+            ToString();
 
     // 不在材质包索引中则使用原版纹理（走原方法）
     if (!g_texture_indexes.contains(assetName)) {
@@ -124,7 +124,7 @@ static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
     }
 
     // 创建材质包的新纹理（UnityEngine 像素）
-    auto texture = terraria_texture2d_create(
+    const auto texture = terraria_texture2d_create(
         textureData.width,
         textureData.height,
         TEXTURE_FORMAT_RGBA32,
@@ -136,6 +136,20 @@ static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
         return false;
     }
 
+    // 直接作为返回值（跳过原方法，只加载材质包一份）
+    *static_cast<patch_handle_t *>(result) = texture;
+    LOGD("LoadTexture2D: replaced texture object for %s", assetName.c_str());
+    return true;
+}
+
+// Postfix：修复Ui显示问题
+static void LoadTexture2D_Postfix(patch_handle_t instance, void **args,
+                                  void *result, const patch_method_signature_t *sig_info) {
+    const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).
+            ToString();
+    const auto texture = *static_cast<patch_handle_t *>(result);
+
+
     // 批次字段处理（规律明确，无需参考原版对象）：
     // UI 面板类纹理需 SharedBatching=0 + NonSharedHeadInsert=1（非共享分支头插，先画背景，
     // 避免尾插盖住上层文字/图标）。物品/方块/弹幕等世界内容 SharedBatching=1。
@@ -146,23 +160,13 @@ static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
                              assetName.find("/WorldCreation/") != std::string::npos;
 
     if (isUiTexture) {
-        if (FSharedBatching.IsValid()) FSharedBatching.SetValue<bool>(texture, false);
-        if (FNonSharedHeadInsert.IsValid()) FNonSharedHeadInsert.SetValue<bool>(texture, true);
+        FSharedBatching.SetValue<bool>(texture, false);
+        FNonSharedHeadInsert.SetValue<bool>(texture, true);
         LOGD("LoadTexture2D: UI texture, SharedBatching=0 NonShared=1 for %s", assetName.c_str());
     } else {
-        if (FSharedBatching.IsValid()) FSharedBatching.SetValue<bool>(texture, true);
+        FSharedBatching.SetValue<bool>(texture, true);
         LOGD("LoadTexture2D: world texture, keep SharedBatching=1 for %s", assetName.c_str());
     }
-
-    // 直接作为返回值（跳过原方法，只加载材质包一份）
-    *static_cast<patch_handle_t *>(result) = texture;
-    LOGD("LoadTexture2D: replaced texture object for %s", assetName.c_str());
-    return true;
-}
-
-// Postfix：原方法已被跳过，保留空实现
-static void LoadTexture2D_Postfix(patch_handle_t instance, void **args,
-                                  void *result, const patch_method_signature_t *sig_info) {
 }
 
 /**
@@ -170,21 +174,21 @@ static void LoadTexture2D_Postfix(patch_handle_t instance, void **args,
  * @param entry 模块条目指针
  * @return true-成功, false-失败
  */
-static bool init_module(module_entry_t *entry)
-{
+static bool init_module(module_entry_t *entry) {
     std::vector<PackEntry> pack_entries{};
 
     load_json(std::filesystem::path(entry->private_dir) / "config.json", pack_entries);
 
     // 预先分配容量，避免 push_back 扩容导致 g_texture_indexes 中已存储的指针失效（悬空）
     packs.reserve(pack_entries.size());
+    g_texture_indexes.reserve(pack_entries.size());
 
-    for (const auto& _pack : pack_entries) {
+    for (const auto &_pack: pack_entries) {
         TexturePack pack(_pack);
         pack.BuildIndex();
-        packs.push_back(pack);  // 拷贝到packs中
+        packs.push_back(pack); // 拷贝到packs中
 
-        for (auto entries_names = pack.GetEntryNames(); const auto& entry_name : entries_names) {
+        for (auto entries_names = pack.GetEntryNames(); const auto &entry_name: entries_names) {
             // 存储packs中最后一个元素的地址（即刚push_back的元素）
             g_texture_indexes[entry_name] = &packs.back();
         }
@@ -192,10 +196,10 @@ static bool init_module(module_entry_t *entry)
 
     TextureManager::Instance().LoadAllAsync();
 
-    TEFKernel::PatchLib::Type ContentManager("Microsoft.Xna.Framework.Content", "ContentManager");
-    auto LoadTexture2D = ContentManager.GetMethod("LoadTexture2D", 1);
+    const TEFKernel::PatchLib::Type ContentManager("Microsoft.Xna.Framework.Content", "ContentManager");
+    const auto LoadTexture2D = ContentManager.GetMethod("LoadTexture2D", 1);
 
-    TEFKernel::PatchLib::Type Texture2d("Microsoft.Xna.Framework.Graphics", "Texture2D");
+    const TEFKernel::PatchLib::Type Texture2d("Microsoft.Xna.Framework.Graphics", "Texture2D");
     FSharedBatching = Texture2d.GetField("SharedBatching");
     FNonSharedHeadInsert = Texture2d.GetField("NonSharedHeadInsert");
 
@@ -210,9 +214,7 @@ static bool init_module(module_entry_t *entry)
  * @param entry 模块条目指针
  * @return true-成功, false-失败
  */
-static bool cleanup_module(module_entry_t *entry)
-{
-
+static bool cleanup_module(module_entry_t *entry) {
     return true;
 }
 
@@ -220,10 +222,10 @@ static bool cleanup_module(module_entry_t *entry)
  * @brief 热重载操作
  * @param entry 模块条目指针
  */
-static void hot_reload(module_entry_t *entry) {  }
+static void hot_reload(module_entry_t *entry) {
+}
 
-static const module_info_t *get_info()
-{
+static const module_info_t *get_info() {
     return &g_module_info;
 }
 
@@ -234,7 +236,6 @@ static constexpr module_ops_t g_module_ops = {
     .get_info = get_info,
 };
 
-API_EXPORT const module_ops_t * API_CALL module_create(void)
-{
+API_EXPORT const module_ops_t * API_CALL module_create(void) {
     return &g_module_ops;
 }

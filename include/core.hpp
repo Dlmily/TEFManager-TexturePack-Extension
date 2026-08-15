@@ -25,4 +25,4 @@
 #include "TexturePack.hpp"
 
 inline std::vector<TexturePack> packs{};
-inline std::unordered_map<std::string, TexturePack*> g_texture_indexes;
+inline std::unordered_map<std::string, TexturePack *> g_texture_indexes;

@@ -26,7 +26,7 @@
 
 #include <ranges>
 
-TextureManager & TextureManager::Instance()  {
+TextureManager &TextureManager::Instance() {
     static TextureManager instance;
     return instance;
 }
@@ -84,8 +84,8 @@ void TextureManager::LoadAllAsync() {
     LOGD("Started async loading for %zu textures", g_texture_indexes.size());
 }
 
-void TextureManager::LoadAsync(const std::vector<std::string> &names)  {
-    for (const auto& name : names) {
+void TextureManager::LoadAsync(const std::vector<std::string> &names) {
+    for (const auto &name: names) {
         LoadAsync(name);
     }
 }
@@ -159,7 +159,7 @@ TextureData TextureManager::Get(const std::string &name) {
             // 等待异步任务结束（确保资源释放）
             if (it->second.valid()) {
                 try {
-                    it->second.wait();  // 等待任务结束，但不获取结果
+                    it->second.wait(); // 等待任务结束，但不获取结果
                 } catch (...) {
                     // 忽略异常
                 }
@@ -204,7 +204,8 @@ TextureData TextureManager::GetWithTimeout(const std::string &name, const int ti
         std::lock_guard lock(_loadingMutex);
         if (const auto it = _loading.find(name); it != _loading.end()) {
             // 等待一小段时间，看看能否完成
-            if (const auto status = it->second.wait_for(std::chrono::milliseconds(timeoutMs)); status == std::future_status::ready) {
+            if (const auto status = it->second.wait_for(std::chrono::milliseconds(timeoutMs));
+                status == std::future_status::ready) {
                 // 异步已完成，取结果
                 auto data = it->second.get();
                 _loading.erase(it);
@@ -223,7 +224,8 @@ TextureData TextureManager::GetWithTimeout(const std::string &name, const int ti
             if (it->second.valid()) {
                 try {
                     it->second.wait();
-                } catch (...) {}
+                } catch (...) {
+                }
             }
             _loading.erase(it);
             _cancelFlags.erase(name);
@@ -254,7 +256,8 @@ void TextureManager::CancelAsync(const std::string &name) {
         if (it->second.valid()) {
             try {
                 it->second.wait();
-            } catch (...) {}
+            } catch (...) {
+            }
         }
         _loading.erase(it);
         _cancelFlags.erase(name);
@@ -274,7 +277,8 @@ void TextureManager::Unload(const std::string &name) {
             if (it->second.valid()) {
                 try {
                     it->second.wait();
-                } catch (...) {}
+                } catch (...) {
+                }
             }
             _loading.erase(it);
         }
@@ -291,12 +295,13 @@ void TextureManager::Clear() {
     // 先取消所有异步任务
     {
         std::lock_guard lock(_loadingMutex);
-        for (auto& [name, future] : _loading) {
+        for (auto &[name, future]: _loading) {
             _cancelFlags[name] = true;
             if (future.valid()) {
                 try {
                     future.wait();
-                } catch (...) {}
+                } catch (...) {
+                }
             }
         }
         _loading.clear();
@@ -325,12 +330,13 @@ void TextureManager::WaitAll() {
     LOGD("All async tasks completed");
 }
 
-void TextureManager::WaitFor(const std::string &name)  {
+void TextureManager::WaitFor(const std::string &name) {
     std::lock_guard lock(_loadingMutex);
     if (const auto it = _loading.find(name); it != _loading.end() && it->second.valid()) {
         try {
             it->second.wait();
-        } catch (...) {}
+        } catch (...) {
+        }
     }
 }
 
@@ -377,13 +383,13 @@ std::string TextureManager::GetStats() const {
 
     char buf[256];
     snprintf(buf, sizeof(buf),
-        "Textures: total=%zu, loaded=%zu, loading=%zu, progress=%.1f%%",
-        totalCount, loadedCount, loadingCount,
-        totalCount > 0 ? (100.0f * static_cast<float>(loadedCount) / static_cast<float>(totalCount)) : 100.0f);
+             "Textures: total=%zu, loaded=%zu, loading=%zu, progress=%.1f%%",
+             totalCount, loadedCount, loadingCount,
+             totalCount > 0 ? (100.0f * static_cast<float>(loadedCount) / static_cast<float>(totalCount)) : 100.0f);
     return buf;
 }
 
-size_t TextureManager::GetLoadedCount() const  {
+size_t TextureManager::GetLoadedCount() const {
     std::lock_guard lock(_loadedMutex);
     return _loaded.size();
 }
