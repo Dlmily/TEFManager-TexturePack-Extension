@@ -99,6 +99,28 @@ static bool load_json(const std::filesystem::path &path, std::vector<PackEntry> 
 static TEFKernel::PatchLib::Field FSharedBatching;
 static TEFKernel::PatchLib::Field FNonSharedHeadInsert;
 
+static bool isUiTexture(const std::string& assetName) {
+    return assetName.find("/UI/") != std::string::npos ||
+                             assetName.find("Inventory_Back") != std::string::npos ||
+                             assetName.find("PanelBackground") != std::string::npos ||
+                             assetName.find("/CharCreation/") != std::string::npos ||
+                             assetName.find("/WorldCreation/") != std::string::npos;
+}
+
+static void fixUi(const std::string& assetName, patch_handle_t texture) {
+    // 批次字段处理（规律明确，无需参考原版对象）：
+    // UI 面板类纹理需 SharedBatching=0 + NonSharedHeadInsert=1（非共享分支头插，先画背景，
+    // 避免尾插盖住上层文字/图标）。物品/方块/弹幕等世界内容 SharedBatching=1。
+
+    if (isUiTexture(assetName)) {
+        FSharedBatching.SetValue<bool>(texture, false);
+        FNonSharedHeadInsert.SetValue<bool>(texture, true);
+        LOGD("LoadTexture2D: UI texture, SharedBatching=0 NonShared=1 for %s", assetName.c_str());
+    } else {
+        FSharedBatching.SetValue<bool>(texture, true);
+        LOGD("LoadTexture2D: world texture, keep SharedBatching=1 for %s", assetName.c_str());
+    }
+}
 
 // Prefix：若 assetName 在材质包索引中，直接创建材质包纹理并作为返回值
 // （返回 true 跳过原方法，避免先加载原版再加载材质包造成双重加载）
@@ -136,38 +158,35 @@ static bool LoadTexture2D_Prefix(patch_handle_t instance, void **args,
         return false;
     }
 
+    fixUi(assetName, texture);
+
     // 直接作为返回值（跳过原方法，只加载材质包一份）
     *static_cast<patch_handle_t *>(result) = texture;
     LOGD("LoadTexture2D: replaced texture object for %s", assetName.c_str());
     return true;
 }
 
+/*
 // Postfix：修复Ui显示问题
 static void LoadTexture2D_Postfix(patch_handle_t instance, void **args,
                                   void *result, const patch_method_signature_t *sig_info) {
+    const auto texture = *static_cast<patch_handle_t*>(instance);
+    if (!texture) return;
+
+
     const auto assetName = TEFKernel::PatchLib::Struct::String(*static_cast<patch_handle_t *>(args[0]), false).
             ToString();
-    const auto texture = *static_cast<patch_handle_t *>(result);
 
+// 08-18 20:35:24.302  8598  8630 I texturepack_extension: load Content/Images/UI/PageIcons/MapSelected
 
-    // 批次字段处理（规律明确，无需参考原版对象）：
-    // UI 面板类纹理需 SharedBatching=0 + NonSharedHeadInsert=1（非共享分支头插，先画背景，
-    // 避免尾插盖住上层文字/图标）。物品/方块/弹幕等世界内容 SharedBatching=1。
-    const bool isUiTexture = assetName.find("/UI/") != std::string::npos ||
-                             assetName.find("Inventory_Back") != std::string::npos ||
-                             assetName.find("PanelBackground") != std::string::npos ||
-                             assetName.find("/CharCreation/") != std::string::npos ||
-                             assetName.find("/WorldCreation/") != std::string::npos;
-
-    if (isUiTexture) {
+    if (assetName.find("PanelBackground") != std::string::npos) {
+        // 修复物品的 UI 显示问题
         FSharedBatching.SetValue<bool>(texture, false);
         FNonSharedHeadInsert.SetValue<bool>(texture, true);
-        LOGD("LoadTexture2D: UI texture, SharedBatching=0 NonShared=1 for %s", assetName.c_str());
-    } else {
-        FSharedBatching.SetValue<bool>(texture, true);
-        LOGD("LoadTexture2D: world texture, keep SharedBatching=1 for %s", assetName.c_str());
+        LOGD("LoadTexture2D: Item texture set to UI mode for %s", assetName.c_str());
     }
 }
+*/
 
 /**
  * @brief 初始化模块
@@ -204,7 +223,7 @@ static bool init_module(module_entry_t *entry) {
     FNonSharedHeadInsert = Texture2d.GetField("NonSharedHeadInsert");
 
     // ReSharper disable once CppNoDiscardExpression
-    patchlib_install_prepost_hook(LoadTexture2D.GetHandle(), LoadTexture2D_Prefix, LoadTexture2D_Postfix);
+    patchlib_install_prepost_hook(LoadTexture2D.GetHandle(), LoadTexture2D_Prefix, nullptr);
 
     return true;
 }
