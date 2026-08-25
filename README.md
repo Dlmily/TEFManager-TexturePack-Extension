@@ -7,11 +7,12 @@
 
 ## 📖 项目介绍
 
-TEFManager 材质包扩展模块，为 Terraria 提供自定义纹理加载能力，支持标准格式和 TLPro 格式材质包，实现纹理的异步预加载和智能缓存管理。
+TEFManager 材质包扩展模块，为 Terraria 提供自定义纹理加载能力，实现纹理的异步预加载和智能缓存管理，并支持受击/死亡音效替换。支持标准格式和 TLPro 格式材质包。
 
 ### ✨ 核心特性
 
 - **🎨 纹理替换** - 支持游戏内任意纹理的替换（UI、物品、NPC、弹幕等）
+- **🎵 受击/死亡音效替换** - 支持替换男性、女性和中性三项角色受击声（不轮换）、更改音调，以及角色死亡音效替换
 - **📦 多格式支持** - 兼容标准 Terraria 格式和 TLPro 格式材质包
 - **⚡ 异步加载** - 启动时自动预加载，不影响游戏流畅度
 - **🧠 智能缓存** - 已加载纹理自动缓存，避免重复解码
@@ -37,16 +38,25 @@ TEFManager 材质包扩展模块，为 Terraria 提供自定义纹理加载能�
 材质包名称.zip
 └── Content/
     ├── Images/
-    │   ├── UI/
-    │   │   ├── Inventory_Back.png
-    │   │   └── PanelBackground.png
-    │   ├── NPC/
-    │   │   └── NPC_Head_1.png
-    │   └── Tiles/
-    │       └── Tile_1.png
+        ├── UI/
+        │   ├── Inventory_Back.png
+        │   └── PanelBackground.png
+        ├── NPC/
+        │   └── NPC_Head_1.png
+        └── Tiles/
+            └── Tile_1.png
+    └── Sounds
+        ├── @Female_Hit_0.xnb
+        ├── @Female_Hit_1.xnb
+        ├── @Female_Hit_2.xnb
+        └── @Player_Killed.xnb    
     └── Map/
         └── MapBG.png
 ```
+
+> [!TIP]
+> 
+> 注：同一个音效文件名可带或不带 @ 前缀，模块会建立兼容别名。
 
 #### TLPro 格式
 
