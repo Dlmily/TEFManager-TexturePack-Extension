@@ -60,8 +60,8 @@ static constexpr module_info_t g_module_info = {
     .pkg_id = "eternal.future.texturepackextension", // 唯一包名
     .name = "TexturePackExtension", // 插件名称
     .author = "eternalfuture-e38299", // 作者
-    .version = "1.14.0", // 版本
-    .version_code = 37, // 版本代码
+    .version = "1.15.1", // 版本
+    .version_code = 39, // 版本代码
     .api_version = 1, // API版本
     .plugin_dependencies_sizes = 0, // 依赖插件数组大小（如需依赖请修改）
     .plugin_dependencies = nullptr, // 依赖插件列表
@@ -289,14 +289,27 @@ static void LoadSoundEffect_Tracking_Postfix(patch_handle_t instance, void **arg
     write_diagnostic("NativePCM track=success key=" + key);
 }
 
-// SoundEffect.Play() 可能由调用方直接使用。只记录已确认属于替换对象的调用。
+// Player_Killed 等声音可直接调用 SoundEffect.Play()，不会创建 SoundEffectInstance。
+// 只有资源追踪与原生 PCM 播放均成功时才跳过原调用；失败时继续原版声音。
 static bool ReplacementSoundEffect_Play_Prefix(patch_handle_t instance, void **args,
                                                const patch_method_signature_t *sig_info, void *result) {
     const auto key = get_replacement_sound_key(instance);
-    if (!key.empty()) {
-        write_diagnostic("Playback SoundEffect.Play key=" + key);
+    if (key.empty()) {
+        return false;
     }
-    return false;
+    std::string error;
+    if (!AndroidPcmPlayer::Instance().Play(key, error)) {
+        write_diagnostic("NativePCM direct-play=failed key=" + key +
+                         " error=" + error + " original=preserved");
+        return false;
+    }
+    // MonoGame/XNA SoundEffect.Play() 返回 bool。PatchLib 说明 result 只在跳过时生效；
+    // result 为空时依然安全，因为本次原生播放已经成功启动。
+    if (result != nullptr) {
+        *static_cast<bool *>(result) = true;
+    }
+    write_diagnostic("NativePCM direct-play=success key=" + key + " original=suppressed");
+    return true;
 }
 
 // SoundEffect.CreateInstance() 将返回的实例与其替换源建立只读关联。
@@ -334,8 +347,9 @@ static bool Player_PlayHurtSound_Prefix(patch_handle_t instance, void **args,
                                         const patch_method_signature_t *sig_info, void *result) {
     // 真机 v1.13.1 日志确认三个 UI 项的实际值为 1、2、3，而非 0、1、2。
     // 保持已验证的 1->Female_Hit_1、2->Female_Hit_2，并使第 3 项固定使用余下的
-    // Female_Hit_0；值 0 同样安全映射到 Female_Hit_0，以兼容旧角色或默认值。
-    static constexpr std::array<const char *, 4> kWaifuHitKeys = {
+    // Female_Hit_0；资源内容完全由玩家上传的 ZIP 决定。值 0 同样映射到 Female_Hit_0，
+    // 以兼容旧角色或默认值。
+    static constexpr std::array<const char *, 4> kPlayerHurtSoundKeys = {
         "Content/Sounds/Female_Hit_0",
         "Content/Sounds/Female_Hit_1",
         "Content/Sounds/Female_Hit_2",
@@ -355,13 +369,13 @@ static bool Player_PlayHurtSound_Prefix(patch_handle_t instance, void **args,
     }
     // 与 XNA/FNA SoundStyle.Pitch 语义一致：[-1, 1] 对应上下一个八度。
     voicePitchOffset = std::clamp(voicePitchOffset, -1.0F, 1.0F);
-    if (voiceVariant < 0 || voiceVariant >= static_cast<int>(kWaifuHitKeys.size())) {
+    if (voiceVariant < 0 || voiceVariant >= static_cast<int>(kPlayerHurtSoundKeys.size())) {
         write_diagnostic("PlayerHurtSound voiceVariant=" + std::to_string(voiceVariant) +
                          " unsupported original=preserved");
         return false;
     }
 
-    const std::string key = kWaifuHitKeys[static_cast<size_t>(voiceVariant)];
+    const std::string key = kPlayerHurtSoundKeys[static_cast<size_t>(voiceVariant)];
     std::string error;
     if (AndroidPcmPlayer::Instance().Play(key, voicePitchOffset, error)) {
         write_diagnostic("PlayerHurtSound voiceVariant=" + std::to_string(voiceVariant) +
@@ -891,8 +905,8 @@ static bool init_module(module_entry_t *entry) {
     std::vector<PackEntry> texture_pack_entries{};
     std::vector<PackEntry> sound_pack_entries{};
     const std::filesystem::path privateDirectory(entry->private_dir);
-    g_diagnostic_path = privateDirectory / "audio_diagnostic_v1.14.0.txt";
-    write_diagnostic("version=1.14.0 init_module=entered", true);
+    g_diagnostic_path = privateDirectory / "audio_diagnostic_v1.15.1.txt";
+    write_diagnostic("version=1.15.1 init_module=entered", true);
     write_diagnostic("private_dir=" + privateDirectory.string());
     const auto audioExtensionDirectory = privateDirectory.parent_path() / "eternal.future.audiopackextension";
 
@@ -1034,6 +1048,12 @@ static bool init_module(module_entry_t *entry) {
                 write_diagnostic("NativePCM register=failed key=" + soundKey + " error=" + pcmError);
                 continue;
             }
+            write_diagnostic("NativePCM register=success key=" + soundKey +
+                             " formatTag=" + std::to_string(sound.format_tag) +
+                             " channels=" + std::to_string(sound.channel_count) +
+                             " sourceRate=" + std::to_string(sound.sample_rate) +
+                             " bits=" + std::to_string(sound.bits_per_sample) +
+                             " blockAlign=" + std::to_string(sound.block_align));
             ++nativePcmEntries;
         }
         write_diagnostic("NativePCM init=success registered=" + std::to_string(nativePcmEntries));
@@ -1086,6 +1106,7 @@ static bool init_module(module_entry_t *entry) {
         write_sound_effect_ctor2_signature(SoundEffect);
         const auto SoundEffectCreateInstance = SoundEffect.GetMethod("CreateInstance", 0);
         const auto SoundEffectPlay = SoundEffect.GetMethod("Play", 0);
+        const auto SoundEffectPlaySignature = SoundEffectPlay.GetSignature();
         const auto SoundEffectInstancePlay = SoundEffectInstance.GetMethod("Play", 0);
         const auto LegacySoundPlayerPlaySound = LegacySoundPlayer.GetMethod("PlaySound", 6);
 
@@ -1101,6 +1122,7 @@ static bool init_module(module_entry_t *entry) {
                          " ContentManager.ServiceProvider.get.valid=" + std::to_string(ContentManagerServiceProviderGetter.IsValid()) +
                          " SoundEffect.CreateInstance0.valid=" + std::to_string(SoundEffectCreateInstance.IsValid()) +
                          " SoundEffect.Play0.valid=" + std::to_string(SoundEffectPlay.IsValid()) +
+                         " SoundEffect.Play0.returnType=" + std::to_string(SoundEffectPlaySignature ? SoundEffectPlaySignature->getReturnType() : PATCH_VOID) +
                          " SoundEffectInstance.Play0.valid=" + std::to_string(SoundEffectInstancePlay.IsValid()) +
                          " LegacySoundPlayer.PlaySound6.valid=" + std::to_string(LegacySoundPlayerPlaySound.IsValid()) +
                          " Player.PlayHurtSound0.valid=" + std::to_string(PlayerPlayHurtSound.IsValid()) +

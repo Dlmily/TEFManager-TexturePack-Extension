@@ -1,162 +1,104 @@
-# TEFManager-TexturePack-Extension
+# TEFManager TexturePack Extension v1.15.1
 
-> TEFManager 材质包扩展模块  
-> 基于 TEFKernel 框架的 Terraria 安卓平台材质包加载系统  
+这是一个**独立、完整、可编译**的 Terraria Android 模块工程。它以公开的 TEFManager-TexturePack-Extension 材质替换工程为基础，加入玩家上传 ZIP 的标准 Terraria XNB 音效扫描、SoundEffect XNB PCM 解析、Android OpenSL ES 多实例播放，以及三项角色受击声音固定映射。工程不包含任何内置音效资源。
 
----
+## 工程内容
 
-## 📖 项目介绍
+| 目录或文件 | 内容 |
+|---|---|
+| `src/core.cpp` | 模块入口、材质替换、声音 Hook、诊断输出、`Player.PlayHurtSound` 的固定映射。 |
+| `src/SoundPack.cpp` | ZIP 中 `Content/Sounds/*.xnb` 的安全扫描、解压和 `@` 前缀别名兼容。 |
+| `src/XnbSound.cpp` | 未压缩 Terraria/XNA `SoundEffectReader` XNB 解析器。 |
+| `src/AndroidPcmPlayer.cpp` | Android OpenSL ES 多实例播放后端；将上传的合法自定义 PCM 规范化为兼容的 16-bit PCM。 |
+| `CMakeLists.txt` | Linux 与 Android `arm64-v8a` / `armeabi-v7a` 构建定义。 |
 
-TEFManager 材质包扩展模块，为 Terraria 提供自定义纹理加载能力，实现纹理的异步预加载和智能缓存管理，并支持受击/死亡音效替换。支持标准格式和 TLPro 格式材质包。
+## 三项角色受击固定映射
 
-### ✨ 核心特性
+真机 Android IL2CPP 诊断确认三项 UI 声音设置使用 `voiceVariant=1`、`2`、`3`。模块不使用全局轮换计数器；相同设置每次受击都固定使用玩家上传包中对应的 PCM。模块同时读取梳妆台保存的 `voicePitchOffset`，以 XNA `Pitch` 语义通过采样率倍率 `2^voicePitchOffset` 输出声音；不会写入或维护模块自己的音调值。
 
-- **🎨 纹理替换** - 支持游戏内任意纹理的替换（UI、物品、NPC、弹幕等）
-- **🎵 受击/死亡音效替换** - 支持替换男性、女性和中性三项角色受击声（不轮换）、更改音调，以及角色死亡音效替换
-- **📦 多格式支持** - 兼容标准 Terraria 格式和 TLPro 格式材质包
-- **⚡ 异步加载** - 启动时自动预加载，不影响游戏流畅度
-- **🧠 智能缓存** - 已加载纹理自动缓存，避免重复解码
-- **🔄 取消机制** - 支持取消正在进行的异步加载任务
+| `voiceVariant` | 固定资源键 |
+|---:|---|
+| `1` | `Content/Sounds/Female_Hit_1` |
+| `2` | `Content/Sounds/Female_Hit_2` |
+| `3` | `Content/Sounds/Female_Hit_0` |
+| `0` | 回退至 `Content/Sounds/Female_Hit_0` |
 
-### 支持格式
+`Player_Killed` 先由 `ContentManager.LoadSoundEffect` 关联到已上传 PCM；若运行时直接调用 `SoundEffect.Play()`，模块会立即播放该 PCM 并在成功时抑制原版。若它创建 `SoundEffectInstance`，既有实例播放替换链仍会生效。
 
-| 类型         | 说明       | 目录结构                     |
-|--------------|------------|------------------------------|
-| `Terraria`   | 标准格式   | `Content/` 目录              |
-| `TLPro`      | TLPro 格式 | `Modified/` 目录 + JSON 配置 |
-| `TEFManager` | 预留格式   | 暂未实现                     |
+## 音效包格式
 
----
-
-## 📦 材质包制作指南
-
-### 目录结构
-
-#### 标准格式 (Terraria)
+标准音效包使用 ZIP，并将 XNB 放在 `Content/Sounds/`。同一个资源名可带或不带 `@` 前缀，模块会建立兼容别名。
 
 ```text
-材质包名称.zip
-└── Content/
-    ├── Images/
-        ├── UI/
-        │   ├── Inventory_Back.png
-        │   └── PanelBackground.png
-        ├── NPC/
-        │   └── NPC_Head_1.png
-        └── Tiles/
-            └── Tile_1.png
+my-sound-pack.zip
+└── Content
     └── Sounds
         ├── @Female_Hit_0.xnb
         ├── @Female_Hit_1.xnb
         ├── @Female_Hit_2.xnb
-        └── @Player_Killed.xnb    
-    └── Map/
-        └── MapBG.png
+        └── @Player_Killed.xnb
 ```
 
-> [!TIP]
-> 
-> 注：同一个音效文件名可带或不带 @ 前缀，模块会建立兼容别名。
+当前 Android PCM 后端支持 **未压缩 XNB、WAVE_FORMAT_PCM、单声道或立体声，以及 8/16/24/32-bit 整数 PCM**。XNB 可声明自定义采样率；模块会先按 XNB 的真实 `WAVEFORMATEX` 参数读取数据，转换为 OpenSL ES 兼容的 16-bit PCM，并重采样到最接近的 Android 标准播放率。压缩 XNB、ADPCM、浮点 PCM 和多于两个声道的数据会被明确记录为不受支持并保留游戏原声，而不会被错误播放。若未从玩家上传 ZIP 成功索引音效，模块不安装任何内置替换，游戏会保持原版声音。
 
-#### TLPro 格式
+## 依赖
+
+构建需要：
+
+| 工具 | 版本或用途 |
+|---|---|
+| CMake | 3.22 或更高版本 |
+| C++ 编译器 | 支持 C++20 |
+| Android NDK | r26 或兼容版本；Android 构建需要 OpenSL ES。 |
+| TEFKernel 头文件 | 已包含于 `include/tefkernel-cpp-wrapper/`。 |
+
+## 构建
+
+### Linux 编译检查
+
+```bash
+cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-linux -j2
+```
+
+### Android arm64-v8a
+
+```bash
+cmake -S . -B build-android-arm64 \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-android-arm64 -j2
+```
+
+### Android armeabi-v7a
+
+```bash
+cmake -S . -B build-android-arm \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-24 \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-android-arm -j2
+```
+
+生成库分别为：
 
 ```text
-材质包名称.zip
-└── Modified/
-    ├── Images/
-    │   └── UI/
-    │       ├── Inventory_Back.png
-    │       └── Inventory_Back.json
-    ├── Tiles/
-    │   └── Tile_1.png
-    │   └── Tile_1.json
-    └── NPC/
-        └── NPC_Head_1.png
-        └── NPC_Head_1.json
+build-android-arm64/libmodule.android.arm64.so
+build-android-arm/libmodule.android.arm.so
 ```
 
-### JSON 配置文件 (TLPro 格式)
+## 验证方式
 
-每个纹理目录需包含对应的 JSON 配置文件：
+上传一个符合上述目录结构的标准 Terraria 音效 ZIP 后，触发受击并读取模块私有目录中的 `audio_diagnostic_v1.15.1.txt`。成功时应出现：
 
-```json
-{
-    "entry_name": "Images/UI/Inventory_Back"
-}
+```text
+Player.voicePitchOffset.field.valid=1 Player.voicePitchOffset.field.size=4
+PlayerHurtSound voiceVariant=1 voicePitchOffset=<已保存值> play=success key=Content/Sounds/Female_Hit_1 original=suppressed
 ```
 
-**字段说明：**
+在梳妆台调整角色受击音调后，下一次受击日志中的 `voicePitchOffset` 应变为对应保存值；模块仅以该值改变 OpenSL ES 播放采样率，并不会改写 XNB 文件或 Player 字段。
 
-| 字段         | 必填 | 类型   | 说明                               |
-|--------------|------|--------|------------------------------------|
-| `entry_name` | ❌   | string | 游戏内纹理标识符，缺省时使用目录名 |
+## 许可证
 
----
-
-## 🎨 纹理规范
-
-### 图片格式要求
-
-- **格式**：PNG（32bit RGBA）
-- **尺寸**：建议为 2 的幂次方（如 64x64、128x128、256x256）
-- **色彩**：支持透明通道（Alpha）
-
-### 常用纹理路径
-
-| 路径                                         | 说明     |
-|----------------------------------------------|----------|
-| `Content/Images/UI/Inventory_Back`           | 背包背景 |
-| `Content/Images/UI/PanelBackground`          | 面板背景 |
-| `Content/Images/NPC/NPC_Head_{id}`           | NPC 头像 |
-| `Content/Images/Tiles/Tile_{id}`             | 图块纹理 |
-| `Content/Images/Projectiles/Projectile_{id}` | 弹幕纹理 |
-| `Content/Images/Map/MapBG`                   | 地图背景 |
-
-### 优先级规则
-
-1. **覆盖顺序**：高优先级材质包会覆盖低优先级的同路径纹理
-2. **索引构建**：按优先级排序后建立索引，同名纹理只保留高优先级版本
-3. **回退机制**：缺失的纹理自动使用原版纹理
-
-## ⚠️ 注意事项
-
-1. **纹理尺寸**：建议使用 2 的幂次方尺寸，避免性能问题
-2. **内存管理**：大尺寸纹理（如 2048x2048）会消耗大量内存，请合理控制
-3. **格式兼容**：仅支持 PNG 格式，不支持 JPG 等其他格式
-4. **异步加载**：`Get()` 方法会检测异步状态，未完成则取消并同步加载
-5. **UI 批次**：UI 纹理自动设置 `SharedBatching=0` 以修复显示问题
-
----
-
-## ❓ 常见问题
-
-**Q: 纹理加载后显示不正确？**
-A: 检查纹理尺寸是否为 2 的幂次方，以及 PNG 格式是否正确。
-
-**Q: 如何调试纹理加载问题？**
-A: 查看日志输出，`LOGD` 和 `LOGE` 会输出详细的加载信息。
-
-**Q: 多个材质包如何覆盖？**
-A: 通过 `priority` 控制优先级，数值越小优先级越高。
-
-**Q: 材质包加载失败怎么办？**
-A: 检查 ZIP 文件完整性，确认目录结构符合要求。
-
-## 🤝 贡献指南
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
-
----
-
-## 📄 许可证
-本项目采用 GNU Affero General Public License v3.0 许可证。
----
-
-## 🔗 相关链接
-
-- [TEFKernel](https://github.com/eternalfuture-e38299/TEFKernel) - 核心框架
-- [问题反馈](https://github.com/eternalfuture-e38299/TEFManager-TexturePack-Extension/issues)
+工程保留原项目的 GNU AGPLv3-or-later 许可证声明。用户自行上传的音效资源应仅在拥有相应使用权的条件下使用和分发。

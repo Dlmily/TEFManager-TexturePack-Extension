@@ -10,6 +10,26 @@ namespace {
 constexpr std::size_t kXnbHeaderSize = 10;
 constexpr std::size_t kMaxXnbBytes = 32U * 1024U * 1024U;
 
+bool read_u16_at(const std::vector<std::uint8_t> &data, const std::size_t offset, std::uint16_t &value) {
+    if (offset > data.size() || data.size() - offset < 2) {
+        return false;
+    }
+    value = static_cast<std::uint16_t>(data[offset]) |
+            (static_cast<std::uint16_t>(data[offset + 1]) << 8U);
+    return true;
+}
+
+bool read_u32_at(const std::vector<std::uint8_t> &data, const std::size_t offset, std::uint32_t &value) {
+    if (offset > data.size() || data.size() - offset < 4) {
+        return false;
+    }
+    value = static_cast<std::uint32_t>(data[offset]) |
+            (static_cast<std::uint32_t>(data[offset + 1]) << 8U) |
+            (static_cast<std::uint32_t>(data[offset + 2]) << 16U) |
+            (static_cast<std::uint32_t>(data[offset + 3]) << 24U);
+    return true;
+}
+
 bool read_u32(const std::vector<std::uint8_t> &data, std::size_t &cursor, std::uint32_t &value) {
     if (cursor > data.size() || data.size() - cursor < 4) {
         return false;
@@ -133,6 +153,17 @@ bool ParseXnbSoundEffect(const std::filesystem::path &source,
     const auto format_begin = cursor - format_size;
     output.format.assign(data.begin() + static_cast<std::ptrdiff_t>(format_begin),
                          data.begin() + static_cast<std::ptrdiff_t>(cursor));
+    if (!read_u16_at(output.format, 0, output.format_tag) ||
+        !read_u16_at(output.format, 2, output.channel_count) ||
+        !read_u32_at(output.format, 4, output.sample_rate) ||
+        !read_u32_at(output.format, 8, output.average_bytes_per_second) ||
+        !read_u16_at(output.format, 12, output.block_align) ||
+        !read_u16_at(output.format, 14, output.bits_per_sample) ||
+        output.channel_count == 0 || output.sample_rate == 0 || output.block_align == 0) {
+        output = {};
+        error = "SoundEffect WAVEFORMATEX fields are invalid";
+        return false;
+    }
 
     std::uint32_t wave_size = 0;
     if (!read_u32(data, cursor, wave_size) || wave_size == 0 || wave_size > kMaxXnbBytes ||
@@ -144,6 +175,13 @@ bool ParseXnbSoundEffect(const std::filesystem::path &source,
     const auto wave_begin = cursor - wave_size;
     output.waveform.assign(data.begin() + static_cast<std::ptrdiff_t>(wave_begin),
                            data.begin() + static_cast<std::ptrdiff_t>(cursor));
+    // 对 PCM，数据必须完整地由样本帧组成。非 PCM 的编码对齐语义属于格式自身，
+    // 仍予以保留并由播放后端明确诊断，而不是把字节错误解释为 PCM。
+    if (output.format_tag == 1 && (output.waveform.size() % output.block_align) != 0U) {
+        output = {};
+        error = "PCM waveform is not block-aligned";
+        return false;
+    }
 
     // loopStart、loopLength、duration 是 SoundEffectReader 的固定尾部。
     if (!read_i32(data, cursor, output.loop_start) ||
