@@ -24,5 +24,9 @@
 
 #include "TexturePack.hpp"
 
+#include <filesystem>
+
 inline std::vector<TexturePack> packs{};
 inline std::unordered_map<std::string, TexturePack *> g_texture_indexes;
+// 规范化 Terraria 声音资源键 -> 模块私有缓存中的 XNB 文件。
+inline std::unordered_map<std::string, std::filesystem::path> g_sound_indexes;
