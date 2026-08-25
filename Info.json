@@ -1,14 +1,32 @@
 {
-  "name": "TEFManager-TexturePack-Extension",
-  "version": "1.1.1",
-  "description": "TexturePack Extension Module for TEFManager",
+  "pkgId": "eternal.future.texturepackextension",
+  "name": "TexturePackExtension",
   "author": "eternalfuture-e38299",
-  "license": "AGPL-3.0",
-  "features": [
-    "Texture Replacement",
-    "Multi-format Support",
-    "Async Loading",
-    "Smart Caching",
-    "Sound Pack Support"
-  ]
+  "description": "使游戏支持材质包，支持原版及TL Pro格式。并支持替换男性、女性和中性三项角色受击声（不轮换）、更改音调，以及角色死亡音效替换",
+  "version": "1.1.1",
+  "versionCode": 36,
+  "detailedInformationURL": "",
+  "updateURL": "",
+  "dependence": [],
+  "support": {
+    "android": {
+      "arm64": true,
+      "arm": true
+    },
+    "windows": {
+      "x64": false,
+      "x86": false
+    },
+    "linux": {
+      "x64": false,
+      "x86": false
+    },
+    "mac": {
+      "x64": false,
+      "arm64": false
+    },
+    "ios": {
+      "arm64": false
+    }
+  }
 }

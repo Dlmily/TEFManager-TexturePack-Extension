@@ -1,4 +1,11 @@
 {
-  "version": "1.1.1",
-  "name": "TEFManager-TexturePack-Extension"
+  "type": "Module",
+  "file": "texturepack_extension.tefpkg",
+  "icon": {
+    "type": "Default"
+  },
+  "plugins": {"type": "NULL"},
+  "tefkernel": {
+    "minVersion": "1.0.0"
+  }
 }
